@@ -1,4 +1,3 @@
-
 local version = "4.1.1"
 
 local defaults = {
@@ -27,13 +26,19 @@ local settings = {
 	style = "Choose 1, 2, 3, 4, 5 or 6",
 	move = "Enable bars movement",
 }
-local armorDebuffs = {
-	["Interface\\Icons\\Ability_Warrior_Sunder"] = 450, 
-	["Interface\\Icons\\Spell_Shadow_Unholystrength"] = 640, 
-	["Interface\\Icons\\Spell_Nature_Faeriefire"] = 505, 
-	["Interface\\Icons\\Ability_Warrior_Riposte"] = 2550,
-	["Interface\\Icons\\Inv_Axe_12"] = 200
+
+local pvpArmorEstimates = {   
+	Warrior = 4500,
+	Paladin = 4500,
+	Hunter = 3000,
+	Shaman = 3000,
+	Druid = 2000,
+	Rogue = 2000,
+	Mage = 1500,
+	Warlock = 1500,
+	Priest = 1500,
 }
+
 local combatStrings = {
 	SPELLLOGSELFOTHER,			-- Your %s hits %s for %d.
 	SPELLLOGCRITSELFOTHER,		-- Your %s crits %s for %d.
@@ -48,6 +53,15 @@ local combatStrings = {
 	SPELLREFLECTSELFOTHER,		-- Your %s is reflected back by %s.
 	SPELLRESISTSELFOTHER		-- Your %s was resisted by %s.
 }
+--[[ add damage bonus buff modifers later.
+local spellModMeleeDmg = {       
+	"Death Wish" = .2,
+	"Sayge's Dark Fortune of Damage" = .1,
+	"Dense Sharpening Stones" = 8,
+	"Gift of Arthas" = 8,
+	"Hemorrhage" = 7
+}
+	--]]
 for index in combatStrings do
 	for _, pattern in {"%%s", "%%d"} do
 		combatStrings[index] = gsub(combatStrings[index], pattern, "(.*)")
@@ -60,7 +74,10 @@ local combat = false
 local prevWepSpeed = nil;
 local prevOHSpeed = nil;
 local configmod = false;
+local critMultipler = nil;
 local playersName = UnitName("player");
+local previousTarget = nil
+local currentTarget = nil
 st_timer = 0.0
 st_timerOff = 0.0
 --------------------------------------------------------------------------------
@@ -253,10 +270,54 @@ local function isDualWield()
 	return (GetWeaponSpeed(true) ~= nil);
 end
 
+function valCritMultipler()        
+  local _,_, _, _, currentRank = GetTalentInfo(1, 11) --impale increases crit damage by 10 percent each rank(2 ranks) warrior talent tab 1, talent 11
+  if currentRank == 1 then 
+    return 2.1
+  elseif currentRank == 2 then
+    return 2.2
+  else 
+    return 2
+  end
+end
+
+local function setCritModifier()
+  if UnitClass("player") == "Warrior" then 
+    critMultipler = valCritMultipler()
+  else
+    critMultipler = 2
+  end
+end
+
+	
+local function setArmorValue()
+	local base, total, bonus, minus = UnitResistance("target",0);
+	if UnitIsPlayer("target") then 
+		armor = pvpArmorEstimates[UnitClass("target")];
+		return armor
+	else
+		armor = total;
+		return armor
+	end
+end
+
+local function setTarget()
+	if UnitName("target") ~= nil and currentTarget ~= UnitName("target") then
+		previousTarget = currentTarget;
+		currentTarget = UnitName("target");
+		return currentTarget, previousTarget
+	elseif UnitName("target") == nil and currentTarget ~= nil then
+		previousTarget = currentTarget;
+		currentTarget = nil;
+		return currentTarget, previousTarget
+	end
+end		
+		 
 local function ShouldResetTimer(off)
 	local timer = st_timer;
-	if (off) then timer = st_timerOff end
-
+	if (off) then 
+		timer = st_timerOff 
+	end
 	local percentTime = timer / GetWeaponSpeed(off)
 	return (percentTime < 0.025)
 end
@@ -310,20 +371,6 @@ local function CheckDamageSource(dmg, dmgType)
 	-- Only work for NPC as they have standard armor values
 	if (not UnitIsPlayer("target")) then
 		-- we will do armor check on the target here
-		local basearmor = {
-			[L['Warrior']] = 3791,
-			['Paladin'] = 3075,
-			['Mage']	= 1923,
-		};
-		local unitClass = UnitClass("target");
-		local armor = basearmor[unitClass];
-		for i=1,16 do
-			debuffTexture, debuffApplications = UnitDebuff("target", i);
-			if (has_value(armorDebuffs,debuffTexture)) then
-				armor = armor - (armorDebuffs[debuffTexture]*debuffApplications);
-			end
-		end
-
 		local tarLVL = UnitLevel("target");
 		if (UnitLevel("target") == -1) then
 			tarLVL = 63;
@@ -338,10 +385,10 @@ local function CheckDamageSource(dmg, dmgType)
 		wpDmg["mainMin"], wpDmg["mainMax"], wpDmg["offMin"], wpDmg["offMax"], _, _, _ = UnitDamage("player");
 
 		if (dmgType == "crit") then
-			wpDmg["mainMin"] = wpDmg["mainMin"] * 2;
-			wpDmg["mainMax"] = wpDmg["mainMax"] * 2;
-			wpDmg["offMin"] = wpDmg["offMin"] * 2;
-			wpDmg["offMax"] = wpDmg["offMax"] * 2;
+			wpDmg["mainMin"] = wpDmg["mainMin"] * critMultipler;  --Warrior get up 220% damage for crits with talents
+			wpDmg["mainMax"] = wpDmg["mainMax"] * critMultipler;
+			wpDmg["offMin"] = wpDmg["offMin"] * critMultipler;
+			wpDmg["offMax"] = wpDmg["offMax"] * critMultipler;
 
 		elseif (dmgType == "glancing")then
 			local mobDef = tarLVL * 5;
@@ -469,12 +516,13 @@ function SP_ST_OnLoad()
 	this:RegisterEvent("CHAT_MSG_SPELL_PERIODIC_SELF_BUFFS")
 	this:RegisterEvent("CHAT_MSG_SPELL_AURA_GONE_SELF")
 	this:RegisterEvent("CHAT_MSG_SPELL_PERIODIC_SELF_DAMAGE")
+  	this:RegisterEvent("PLAYER_TARGET_CHANGED")
 end
 
 function SP_ST_OnEvent()
 	if (event == "ADDON_LOADED") then
 		if (string.lower(arg1) == "sp_swingtimer") then
-
+	
 			if (SP_ST_GS == nil) then
 				StaticPopup_Show("SP_ST_Install")
 			end
@@ -490,7 +538,8 @@ function SP_ST_OnEvent()
 			UpdateSettings()
 			UpdateWeapon()
 			UpdateAppearance()
-
+      		setCritModifier()
+			
 			print("SP_SwingTimer " .. version .. " loaded. Options: /st")
 		end
 
@@ -498,7 +547,14 @@ function SP_ST_OnEvent()
 		or (event == "PLAYER_ENTERING_WORLD") then
 		combat = false
 		UpdateDisplay()
-
+    
+ 	 elseif (event == "PLAYER_TARGET_CHANGED") then
+		setTarget()
+		if currentTarget ~= nil then
+			setArmorValue()
+		end
+		
+   	
 	elseif (event == "PLAYER_REGEN_DISABLED") then
 		combat = true
 
