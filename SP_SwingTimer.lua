@@ -1,4 +1,4 @@
-local version = "4.1.1"
+local version = "5.0.0"
 
 local defaults = {
 	x = 0,
@@ -26,7 +26,14 @@ local settings = {
 	style = "Choose 1, 2, 3, 4, 5 or 6",
 	move = "Enable bars movement",
 }
-
+--Action Id array; textureArray[hs/cleave/bloodthirst/whirlwind]= returns the action ID of these abilities
+local textureArray ={
+  hS = "Ability_Rogue_Ambush" ,
+  cleave = "Ability_Warrior_Cleave",
+  bloodthirst = "Spell_Nature_BloodLust",
+  whirlwind = "Ability_Whirlwind", 
+}
+  
 local pvpArmorEstimates = {   
 	Warrior = 4500,
 	Paladin = 4500,
@@ -53,20 +60,13 @@ local combatStrings = {
 	SPELLREFLECTSELFOTHER,		-- Your %s is reflected back by %s.
 	SPELLRESISTSELFOTHER		-- Your %s was resisted by %s.
 }
---[[ add damage bonus buff modifers later.
-local spellModMeleeDmg = {       
-	"Death Wish" = .2,
-	"Sayge's Dark Fortune of Damage" = .1,
-	"Dense Sharpening Stones" = 8,
-	"Gift of Arthas" = 8,
-	"Hemorrhage" = 7
-}
-	--]]
+
 for index in combatStrings do
 	for _, pattern in {"%%s", "%%d"} do
 		combatStrings[index] = gsub(combatStrings[index], pattern, "(.*)")
 	end
 end
+
 --------------------------------------------------------------------------------
 local weapon = nil
 local offhand = nil
@@ -80,6 +80,13 @@ local previousTarget = nil
 local currentTarget = nil
 st_timer = 0.0
 st_timerOff = 0.0
+hSId = 0
+cleaveId = 0
+bloodtId = 0
+bloodtTime = 0
+wwId = 0 
+wwTime = 0
+
 --------------------------------------------------------------------------------
 local loc = {};
 loc["enUS"] = {
@@ -255,6 +262,154 @@ local function UpdateAppearance()
 	SP_ST_Frame:SetScale(SP_ST_GS["s"])
 	SP_ST_FrameOFF:SetAlpha(SP_ST_GS["a"])
 	SP_ST_FrameOFF:SetScale(SP_ST_GS["s"])
+end
+-- return provide a value that can be used in a conditional statemnet to test as an attempt to prevent using HS/Cleave when low on rage
+function isEarlyInST(off)
+  speedMH, speedOH = UnitAttackSpeed("player")
+  if not off then
+    if speedMH*.40 < st_timer then
+      return true
+    else
+      return false
+    end
+  else
+    if speedOH*.50 < st_timerOff then
+      return true
+    else
+      return false
+    end
+  end
+end
+-- return provide a value that can be used in a conditional statemnet to test as an attempt to prevent using HS/Cleave when low on rage
+function isLateInST(off)
+  speedMH, speedOH = UnitAttackSpeed("player")
+  if not off then
+    if (speedMH*.15 > st_timer) then
+      return true
+    else
+      return false
+    end
+  else
+    if (speedOH*.15 > st_timerOff) then
+      return true
+    else
+      return false
+    end
+  end
+end
+--adds the action to an array which can be used in various API functions
+function WarriorActionIds()
+  local i, t
+  for i = 1, 120 do
+    t = GetActionTexture(i)
+    if t then
+      if string.find(t, textureArray["hS"]) then
+        hSId = i;
+      elseif string.find(t, textureArray["cleave"]) then
+        cleaveId = i
+      elseif string.find(t, textureArray["bloodthirst"]) then
+          bloodtId = i
+      elseif string.find(t, textureArray["whirlwind"]) then
+          wwId = i      
+      end
+    end
+  end
+end
+--[[ Work needs to be done here but the idea being you can predict future rage useage
+function BloodthirstTimeLeft()
+  local start, duration, enable = GetActionCooldown(bloodtId)
+  if start ~= 0 then
+    btTime = ((start + duration) - GetTime())
+    return btTime
+  else 
+    return 0
+  end
+end 
+
+function WhirlwindTLeft()
+  local start duration, enable = GetActionCooldown(wwId)
+  if start ~= 0 then
+    wwTime = ((start + duration) - GetTime())
+  else 
+    wwTime = 0
+  end
+end
+Possible further differentiate when to unque heroic stike based on upcoming rage
+ nextBtCd, BtTime wwTime
+function wwClip()
+  nextBtCd = btTime + 6
+  
+  if wwTime > 6 then
+    if nextBtCd < wwTime then
+      return false
+    elseif nextBtCd 
+    elseif nextBtCd > wwTime + 1.5 then
+      
+      if btTime + 1.5 < wwTime then
+        if btTime + 6 < 1.5 + wwTime then
+          rWwtime = btTime + 7.5
+        elseif btTime + 6 > 1.5 = wwTime
+          rWwtime = wwTime
+      else if BloodthirstTLeft() + 1.5 < WhirlwindTLeft() + 1.5 then  
+        waitWwTime = BloodthirstTLeft() + 1.5
+      end
+    end
+  end
+end
+--]]
+--Function that will use the sptimer variables 
+function QueUnQue(Cleave, num)
+  if OffhandHasWeapon() then
+    if not num or num == 1 then --QueUnQue()
+      if not isHSorCleaveQued() then
+        if Cleave == true then --QueUnQue(true, 1) or QueUnQue(true)
+          if (UnitMana("player") >= 20) and isLateInST(true) then
+            UseAction(cleaveId)
+          end
+        else 
+          if (UnitMana("player") >= 12) and isLateInST(true) then
+            UseAction(hSId) 
+          end
+        end
+      else
+        if UnitMana("player") < 30 then
+          if isEarlyInST(true) then 
+            SpellStopCasting()
+          end
+        end
+      end
+    elseif num == 2 then  ----Try and prevent use of HS/Cleave threat tight
+      if not isHSorCleaveQued() then
+        if UnitMana("player") >= 12 then
+          if isLateInST(true) then 
+            UseAction(hSId)
+          end
+        end
+      elseif isHSorCleaveQued() and isEarlyInST(true) then
+        SpellStopCasting()
+      end
+    elseif num==3 then 
+      if Cleave == true then 
+        UseAction(cleaveId)
+      else
+        UseAction(hSId)
+      end
+    end
+  else
+    if Cleave == true then
+      UseAction(cleaveId)
+    else
+      UseAction(hsId)
+    end
+  end
+end
+--Used to see if a active for next mainhand attack ability is currently active
+function isHSorCleaveQued()
+  if IsCurrentAction(hSId) or IsCurrentAction(cleaveId) then
+    return true
+  else 
+    return false
+  end
 end
 
 local function GetWeaponSpeed(off)
@@ -521,6 +676,7 @@ end
 
 function SP_ST_OnEvent()
 	if (event == "ADDON_LOADED") then
+    WarriorActionIds()
 		if (string.lower(arg1) == "sp_swingtimer") then
 	
 			if (SP_ST_GS == nil) then
@@ -538,7 +694,8 @@ function SP_ST_OnEvent()
 			UpdateSettings()
 			UpdateWeapon()
 			UpdateAppearance()
-      		setCritModifier()
+      setCritModifier()
+      WarriorActionIds()
 			
 			print("SP_SwingTimer " .. version .. " loaded. Options: /st")
 		end
@@ -717,4 +874,5 @@ local function ChatHandler(msg)
 	TestShow()
 end
 
+SlashCmdList["SPSWINGTIMER"] = ChatHandler
 SlashCmdList["SPSWINGTIMER"] = ChatHandler
